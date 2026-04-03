@@ -1,56 +1,41 @@
-import { AutoModel, ModelRegistry, Tensor, type ProgressInfo } from "@huggingface/transformers";
+import { AutoModel, ModelRegistry, Tensor } from "@huggingface/transformers";
+import type {
+  ErrorListener,
+  ModelProgressCallback,
+  NumberListener,
+  ProgressEvent,
+  RecordListener,
+  VadModel,
+  VadRecorderInfo,
+  VadRecorderOptions,
+  VoidListener,
+} from "./types";
+import { computeDecibels, concatFrames, encodeWav } from "./utils/audio";
+import { isModelCachedInAppCache } from "./utils/cache";
+import { normalizeError } from "./utils/errors";
+import { clamp } from "./utils/math";
+import { createWorkletUrl } from "./utils/worklet";
+
+export type {
+  ProgressEvent,
+  VadRecorderInfo,
+  VadRecorderOptions,
+} from "./types";
 
 const MODEL_ID = "onnx-community/silero-vad";
 const MODEL_NAME = "silero-vad";
 const FRAME_SIZE = 512;
+const SAMPLE_RATE = 16000;
 const MODEL_OPTIONS = { dtype: "fp32" } as const;
 
 const DEFAULT_OPTIONS: Required<VadRecorderOptions> = {
   threshold: 0.5,
   minSpeechDuration: 250,
   minSilenceDuration: 1000,
-  sampleRate: 16000,
   channelCount: 1,
-  mimeType: "audio/webm",
-  prependSilence: 100,
+  prependSilence: 200,
   appendSilence: 300,
 };
-
-type ProgressEvent =
-  | { status: "downloading"; name: string; progress: number }
-  | { status: "loading"; name: string; progress: number }
-  | { status: "ready" };
-
-export type VadRecorderInfo = {
-  isCached: boolean;
-  downloadSize: number;
-};
-
-export type VadRecorderOptions = {
-  threshold?: number;
-  minSpeechDuration?: number;
-  minSilenceDuration?: number;
-  sampleRate?: number;
-  channelCount?: number;
-  mimeType?: string;
-  prependSilence?: number;
-  appendSilence?: number;
-};
-
-type VadModelOutput = {
-  stateN: Tensor;
-  output: Tensor;
-};
-
-type VadModel = {
-  (inputs: { input: Tensor; sr: Tensor; state: Tensor }): Promise<VadModelOutput>;
-  dispose?: () => Promise<unknown>;
-};
-
-type VoidListener = (() => void) | null;
-type ErrorListener = ((error: Error) => void) | null;
-type RecordListener = ((blob: Blob) => void) | null;
-type NumberListener = ((value: number) => void) | null;
 
 export class VadRecorder {
   private readonly options: Required<VadRecorderOptions>;
@@ -98,32 +83,43 @@ export class VadRecorder {
       ...DEFAULT_OPTIONS,
       ...options,
       threshold: clamp(options.threshold ?? DEFAULT_OPTIONS.threshold, 0, 1),
-      minSpeechDuration: Math.max(0, options.minSpeechDuration ?? DEFAULT_OPTIONS.minSpeechDuration),
-      minSilenceDuration: Math.max(0, options.minSilenceDuration ?? DEFAULT_OPTIONS.minSilenceDuration),
-      sampleRate: Math.max(8000, options.sampleRate ?? DEFAULT_OPTIONS.sampleRate),
-      channelCount: Math.max(1, options.channelCount ?? DEFAULT_OPTIONS.channelCount),
-      prependSilence: Math.max(0, options.prependSilence ?? DEFAULT_OPTIONS.prependSilence),
-      appendSilence: Math.max(0, options.appendSilence ?? DEFAULT_OPTIONS.appendSilence),
+      minSpeechDuration: Math.max(
+        0,
+        options.minSpeechDuration ?? DEFAULT_OPTIONS.minSpeechDuration,
+      ),
+      minSilenceDuration: Math.max(
+        0,
+        options.minSilenceDuration ?? DEFAULT_OPTIONS.minSilenceDuration,
+      ),
+      channelCount: Math.max(
+        1,
+        options.channelCount ?? DEFAULT_OPTIONS.channelCount,
+      ),
+      prependSilence: Math.max(
+        0,
+        options.prependSilence ?? DEFAULT_OPTIONS.prependSilence,
+      ),
+      appendSilence: Math.max(
+        0,
+        options.appendSilence ?? DEFAULT_OPTIONS.appendSilence,
+      ),
     };
   }
 
   static async info(): Promise<VadRecorderInfo> {
-    const [isCached, downloadSize] = await Promise.all([
-      ModelRegistry.is_cached(MODEL_ID, MODEL_OPTIONS),
-      (async () => {
-        const files = await ModelRegistry.get_model_files(MODEL_ID, MODEL_OPTIONS);
-        const metadata = await Promise.all(
-          files.map((file) => ModelRegistry.get_file_metadata(MODEL_ID, file)),
-        );
-
-        return metadata.reduce((total, file) => total + (file.size ?? 0), 0);
-      })(),
+    const file = "onnx/model.onnx";
+    const [isCached, meta] = await Promise.all([
+      isModelCachedInAppCache(MODEL_ID),
+      ModelRegistry.get_file_metadata(MODEL_ID, file),
     ]);
+    const downloadSize = meta.size ?? 0;
 
     return { isCached, downloadSize };
   }
 
-  async initialize(onProgress?: (progress: ProgressEvent) => void): Promise<void> {
+  async initialize(
+    onProgress?: (progress: ProgressEvent) => void,
+  ): Promise<void> {
     this.assertNotDestroyed();
 
     if (this.model) {
@@ -145,7 +141,9 @@ export class VadRecorder {
     this.assertNotDestroyed();
 
     if (!this.model) {
-      throw new Error("VadRecorder.start() requires initialize() to be called first.");
+      throw new Error(
+        "VadRecorder.start() requires initialize() to be called first.",
+      );
     }
 
     if (this.started) {
@@ -160,7 +158,7 @@ export class VadRecorder {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: this.options.channelCount,
-          sampleRate: this.options.sampleRate,
+          sampleRate: SAMPLE_RATE,
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
@@ -168,15 +166,24 @@ export class VadRecorder {
       });
 
       this.stream = stream;
-      this.audioContext = new AudioContext({ sampleRate: this.options.sampleRate });
-      this.srTensor = new Tensor("int64", [BigInt(this.audioContext.sampleRate)], []);
+      this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+      this.srTensor = new Tensor(
+        "int64",
+        [BigInt(this.audioContext.sampleRate)],
+        [],
+      );
 
       this.sourceNode = this.audioContext.createMediaStreamSource(stream);
       this.workletUrl = createWorkletUrl(FRAME_SIZE);
       await this.audioContext.audioWorklet.addModule(this.workletUrl);
 
-      this.workletNode = new AudioWorkletNode(this.audioContext, "vad-recorder-worklet");
-      this.workletNode.port.onmessage = (event: MessageEvent<{ buffer: Float32Array }>) => {
+      this.workletNode = new AudioWorkletNode(
+        this.audioContext,
+        "vad-recorder-worklet",
+      );
+      this.workletNode.port.onmessage = (
+        event: MessageEvent<{ buffer: Float32Array }>,
+      ) => {
         if (!event.data?.buffer) {
           return;
         }
@@ -270,16 +277,19 @@ export class VadRecorder {
     this.onSpeechProbabilityListener = listener;
   }
 
-  private async loadModel(onProgress?: (progress: ProgressEvent) => void): Promise<void> {
+  private async loadModel(
+    onProgress?: (progress: ProgressEvent) => void,
+  ): Promise<void> {
     let lastProgress = -1;
 
-    const progressCallback = (info: ProgressInfo): void => {
+    const progressCallback: ModelProgressCallback = (info): void => {
       if (!onProgress) {
         return;
       }
 
       if (info.status === "progress_total") {
-        const progress = Math.round(clamp(info.progress / 100, 0, 1) * 100) / 100;
+        const progress =
+          Math.round(clamp(info.progress / 100, 0, 1) * 100) / 100;
         if (progress === lastProgress) {
           return;
         }
@@ -302,7 +312,11 @@ export class VadRecorder {
     })) as unknown as VadModel;
 
     this.model = loaded;
-    this.vadState = new Tensor("float32", new Float32Array(2 * 1 * 128), [2, 1, 128]);
+    this.vadState = new Tensor(
+      "float32",
+      new Float32Array(2 * 1 * 128),
+      [2, 1, 128],
+    );
   }
 
   private async processFrameQueue(): Promise<void> {
@@ -319,7 +333,14 @@ export class VadRecorder {
           continue;
         }
 
-        if (this.destroyed || !this.started || this.paused || !this.model || !this.srTensor || !this.vadState) {
+        if (
+          this.destroyed ||
+          !this.started ||
+          this.paused ||
+          !this.model ||
+          !this.srTensor ||
+          !this.vadState
+        ) {
           continue;
         }
 
@@ -365,7 +386,10 @@ export class VadRecorder {
 
         this.consecutiveSilenceMs += frameMs;
 
-        if (this.appendCountdownMs <= 0 && this.consecutiveSilenceMs >= this.options.minSilenceDuration) {
+        if (
+          this.appendCountdownMs <= 0 &&
+          this.consecutiveSilenceMs >= this.options.minSilenceDuration
+        ) {
           this.onSpeechEndListener?.();
           this.appendCountdownMs = this.options.appendSilence;
         }
@@ -387,14 +411,20 @@ export class VadRecorder {
   private beginSegment(): void {
     this.isSpeechSegmentActive = true;
     this.segmentFrames = [...this.prependFrames.map((frame) => frame.slice())];
-    this.segmentSamples = this.segmentFrames.reduce((sum, frame) => sum + frame.length, 0);
+    this.segmentSamples = this.segmentFrames.reduce(
+      (sum, frame) => sum + frame.length,
+      0,
+    );
     this.segmentSpeechMs = 0;
     this.consecutiveSilenceMs = 0;
     this.appendCountdownMs = 0;
     this.onSpeechStartListener?.();
   }
 
-  private appendFrameToSegment(frame: Float32Array, containsSpeech: boolean): void {
+  private appendFrameToSegment(
+    frame: Float32Array,
+    containsSpeech: boolean,
+  ): void {
     this.segmentFrames.push(frame.slice());
     this.segmentSamples += frame.length;
 
@@ -410,6 +440,7 @@ export class VadRecorder {
 
     const totalSpeechMs = this.segmentSpeechMs;
     const frames = this.segmentFrames;
+    const totalSamples = this.segmentSamples;
 
     this.resetSegmentState();
 
@@ -417,27 +448,36 @@ export class VadRecorder {
       return;
     }
 
-    const pcm = concatFrames(frames, this.segmentSamples);
-    const blob = encodeWav(pcm, this.audioContext?.sampleRate ?? this.options.sampleRate, this.options.mimeType);
+    const pcm = concatFrames(frames, totalSamples);
+    const blob = encodeWav(pcm, this.audioContext?.sampleRate ?? SAMPLE_RATE);
     this.onRecordListener?.(blob);
   }
 
   private frameDurationMs(samples: number): number {
-    const sampleRate = this.audioContext?.sampleRate ?? this.options.sampleRate;
+    const sampleRate = this.audioContext?.sampleRate ?? SAMPLE_RATE;
     return (samples / sampleRate) * 1000;
   }
 
   private pushPrependFrame(frame: Float32Array): void {
-    if (this.options.prependSilence <= 0) {
+    if (
+      this.options.prependSilence <= 0 &&
+      this.options.minSpeechDuration <= 0
+    ) {
       return;
     }
 
-    const maxPrependSamples = Math.floor((this.options.prependSilence / 1000) * (this.audioContext?.sampleRate ?? this.options.sampleRate));
+    const sampleRate = this.audioContext?.sampleRate ?? SAMPLE_RATE;
+    const requiredMs =
+      this.options.prependSilence + this.options.minSpeechDuration;
+    const maxPrependSamples = Math.floor((requiredMs / 1000) * sampleRate);
 
     this.prependFrames.push(frame.slice());
     this.prependSamples += frame.length;
 
-    while (this.prependSamples > maxPrependSamples && this.prependFrames.length > 0) {
+    while (
+      this.prependSamples > maxPrependSamples &&
+      this.prependFrames.length > 0
+    ) {
       const removed = this.prependFrames.shift();
       if (removed) {
         this.prependSamples -= removed.length;
@@ -458,9 +498,17 @@ export class VadRecorder {
     this.prependSamples = 0;
 
     if (this.audioContext) {
-      this.srTensor = new Tensor("int64", [BigInt(this.audioContext.sampleRate)], []);
+      this.srTensor = new Tensor(
+        "int64",
+        [BigInt(this.audioContext.sampleRate)],
+        [],
+      );
     }
-    this.vadState = new Tensor("float32", new Float32Array(2 * 1 * 128), [2, 1, 128]);
+    this.vadState = new Tensor(
+      "float32",
+      new Float32Array(2 * 1 * 128),
+      [2, 1, 128],
+    );
   }
 
   private teardownAudio(): void {
@@ -513,113 +561,4 @@ export class VadRecorder {
       throw new Error("VadRecorder instance has been destroyed.");
     }
   }
-}
-
-function createWorkletUrl(frameSize: number): string {
-  const code = `
-class VadRecorderWorklet extends AudioWorkletProcessor {
-  constructor() {
-    super();
-    this.size = ${frameSize};
-    this.buffer = new Float32Array(this.size);
-    this.index = 0;
-  }
-
-  process(inputs) {
-    const input = inputs[0];
-    if (input && input[0]) {
-      const channel = input[0];
-      for (let i = 0; i < channel.length; i++) {
-        this.buffer[this.index++] = channel[i];
-        if (this.index === this.size) {
-          this.port.postMessage({ buffer: this.buffer.slice(0) });
-          this.index = 0;
-        }
-      }
-    }
-    return true;
-  }
-}
-
-registerProcessor("vad-recorder-worklet", VadRecorderWorklet);
-`;
-
-  return URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
-}
-
-function computeDecibels(frame: Float32Array): number {
-  let sum = 0;
-  for (let i = 0; i < frame.length; i++) {
-    sum += frame[i] * frame[i];
-  }
-
-  const rms = Math.sqrt(sum / Math.max(frame.length, 1));
-  if (rms <= 0) {
-    return -100;
-  }
-
-  return 20 * Math.log10(rms);
-}
-
-function concatFrames(frames: Float32Array[], expectedSamples: number): Float32Array {
-  const output = new Float32Array(expectedSamples);
-  let offset = 0;
-
-  for (const frame of frames) {
-    output.set(frame, offset);
-    offset += frame.length;
-  }
-
-  return output;
-}
-
-function encodeWav(samples: Float32Array, sampleRate: number, _mimeType: string): Blob {
-  const bytesPerSample = 2;
-  const blockAlign = bytesPerSample;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = samples.length * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  writeAscii(view, 0, "RIFF");
-  view.setUint32(4, 36 + dataSize, true);
-  writeAscii(view, 8, "WAVE");
-  writeAscii(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true);
-  writeAscii(view, 36, "data");
-  view.setUint32(40, dataSize, true);
-
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const value = clamp(samples[i], -1, 1);
-    const pcm = value < 0 ? value * 0x8000 : value * 0x7fff;
-    view.setInt16(offset, pcm, true);
-    offset += 2;
-  }
-
-  return new Blob([buffer], { type: "audio/wav" });
-}
-
-function writeAscii(view: DataView, offset: number, value: string): void {
-  for (let i = 0; i < value.length; i++) {
-    view.setUint8(offset + i, value.charCodeAt(i));
-  }
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function normalizeError(error: unknown): Error {
-  if (error instanceof Error) {
-    return error;
-  }
-
-  return new Error(typeof error === "string" ? error : "Unknown error");
 }

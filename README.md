@@ -55,13 +55,24 @@ Returns model cache/download metadata.
 All options are optional:
 
 - `threshold` (default `0.5`)
+  - Speech probability cutoff (`0-1`).
+  - Higher = stricter detection (fewer false positives, can miss quiet speech).
+  - Lower = more sensitive (captures quiet speech, can trigger on noise).
 - `minSpeechDuration` ms (default `250`)
+  - Minimum continuous speech before a segment officially starts.
+  - Helps filter clicks, breaths, and very short noises.
 - `minSilenceDuration` ms (default `1000`)
-- `sampleRate` (default `16000`)
+  - Required silence before a segment is considered finished.
+  - Increase to avoid splitting natural pauses mid-sentence.
 - `channelCount` (default `1`)
-- `mimeType` (default `audio/webm`)
+  - Number of input channels requested from the microphone.
+  - `1` (mono) is recommended.
 - `prependSilence` ms (default `100`)
+  - Audio prepended before detected speech to avoid clipping first phonemes.
+  - Internally combined with `minSpeechDuration` in the rolling pre-buffer.
 - `appendSilence` ms (default `300`)
+  - Extra audio kept after speech end is detected.
+  - Helps avoid cutting off trailing words/syllables.
 
 ### Lifecycle
 
@@ -121,4 +132,5 @@ npm run dev
 ## Notes
 
 - Designed for browser environments.
+- Sample rate is fixed at `16000` (Silero VAD requirement).
 - Current recording output is WAV blobs (`audio/wav`) for deterministic PCM assembly.
