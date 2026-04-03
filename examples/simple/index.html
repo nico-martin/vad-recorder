@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>vad-recorder simple example</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1>vad-recorder</h1>
+      <p>Simple demo for model info, init, recording lifecycle, and events.</p>
+
+      <section>
+        <button id="info">Info</button>
+        <button id="init">Initialize</button>
+        <button id="start">Start</button>
+        <button id="pause">Pause</button>
+        <button id="resume">Resume</button>
+        <button id="stop">Stop</button>
+      </section>
+
+      <section>
+        <p id="status">Status: idle</p>
+        <p id="model">Model: unknown</p>
+        <p id="volume">Volume: -</p>
+        <p id="speech-prob">Speech probability: -</p>
+        <progress id="progress" max="1" value="0"></progress>
+      </section>
+
+      <section>
+        <h2>Event log</h2>
+        <pre id="log"></pre>
+      </section>
+
+      <section>
+        <h2>Recordings</h2>
+        <div id="recordings"></div>
+      </section>
+    </main>
+  </body>
+</html>

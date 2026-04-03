@@ -1,0 +1,36 @@
+{
+  "name": "vad-recorder",
+  "version": "0.1.0",
+  "description": "TypeScript library",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "dev": "esbuild src/index.ts --bundle --platform=neutral --format=esm --external:@huggingface/transformers --outfile=dist/index.js --sourcemap --watch",
+    "build:esm": "esbuild src/index.ts --bundle --platform=neutral --format=esm --external:@huggingface/transformers --outfile=dist/index.js --minify",
+    "build:cjs": "esbuild src/index.ts --bundle --platform=neutral --format=cjs --external:@huggingface/transformers --outfile=dist/index.cjs --minify",
+    "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
+    "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run build:types",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.3",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.0.1"
+  }
+}
