@@ -6,7 +6,7 @@ export async function isModelCachedInAppCache(
   }
 
   try {
-    const cache = await caches.open("transformers-js");
+    const cache = await caches.open("transformers-cache");
     const requests = await cache.keys();
 
     for (const request of requests) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
-import { VadRecorder, type VadRecorderOptions } from "../../../src/index";
+import { useVadRecorder } from "../../../src/react";
+import type { VadRecorderOptions } from "../../../src";
 
 type Recording = {
   id: string;
@@ -17,14 +18,28 @@ const DEFAULT_OPTIONS: VadRecorderOptions = {
 };
 
 export default function App() {
-  const recorderRef = useRef<VadRecorder | null>(null);
-  const [status, setStatus] = useState("idle");
-  const [volume, setVolume] = useState("-");
-  const [probability, setProbability] = useState("-");
-  const [progress, setProgress] = useState(0);
+  const [currentOptions, setCurrentOptions] =
+    useState<VadRecorderOptions>(DEFAULT_OPTIONS);
   const [modelInfo, setModelInfo] = useState("unknown");
   const [logs, setLogs] = useState<string[]>([]);
-  const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [recordingItems, setRecordingItems] = useState<Recording[]>([]);
+  const firstStatusRef = useRef(true);
+  const prevRecordingCountRef = useRef(0);
+
+  const {
+    status,
+    progress,
+    volumeDb,
+    speechProbability,
+    recordings,
+    error,
+    initialize,
+    start,
+    stop,
+    pause,
+    resume,
+    info,
+  } = useVadRecorder(currentOptions);
 
   const {
     register,
@@ -37,130 +52,91 @@ export default function App() {
   const recordingCount = useMemo(() => recordings.length, [recordings.length]);
 
   useEffect(() => {
-    void createRecorder(DEFAULT_OPTIONS);
+    if (firstStatusRef.current) {
+      firstStatusRef.current = false;
+      return;
+    }
+
+    addLog(`status: ${status}`);
+  }, [status]);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+    addLog(`error: ${error.message}`);
+  }, [error]);
+
+  useEffect(() => {
+    if (recordings.length > prevRecordingCountRef.current && recordings[0]) {
+      addLog(`onRecord (${recordings[0].size} bytes)`);
+    }
+    prevRecordingCountRef.current = recordings.length;
+
+    setRecordingItems((previous) => {
+      for (const item of previous) {
+        URL.revokeObjectURL(item.url);
+      }
+
+      return recordings.map((blob) => ({
+        id: crypto.randomUUID(),
+        url: URL.createObjectURL(blob),
+        size: blob.size,
+      }));
+    });
+  }, [recordings]);
+
+  useEffect(() => {
     return () => {
-      void cleanupRecorder();
-      setRecordings((prev) => {
-        for (const recording of prev) {
-          URL.revokeObjectURL(recording.url);
+      setRecordingItems((previous) => {
+        for (const item of previous) {
+          URL.revokeObjectURL(item.url);
         }
         return [];
       });
     };
   }, []);
 
-  async function createRecorder(options: VadRecorderOptions): Promise<void> {
-    await cleanupRecorder();
-
-    const recorder = new VadRecorder(options);
-
-    recorder.onReady(() => {
-      setStatus("ready/listening");
-      addLog("onReady");
-    });
-    recorder.onSpeechStart(() => {
-      setStatus("speech detected");
-      addLog("onSpeechStart");
-    });
-    recorder.onSpeechEnd(() => {
-      setStatus("speech ended");
-      addLog("onSpeechEnd");
-    });
-    recorder.onVolumeChange((db) => {
-      setVolume(`${db.toFixed(1)} dB`);
-    });
-    recorder.onSpeechProbability((value) => {
-      setProbability(value.toFixed(3));
-    });
-    recorder.onError((error) => {
-      setStatus("error");
-      addLog(`onError: ${error.message}`);
-    });
-    recorder.onRecord((blob) => {
-      const url = URL.createObjectURL(blob);
-      setRecordings((prev) => [
-        { id: crypto.randomUUID(), url, size: blob.size },
-        ...prev,
-      ]);
-      addLog(`onRecord (${blob.size} bytes)`);
-    });
-
-    recorderRef.current = recorder;
-    setStatus("recorder created");
-    addLog("new recorder created with current options");
-  }
-
-  async function cleanupRecorder(): Promise<void> {
-    if (!recorderRef.current) {
-      return;
-    }
-
-    const recorder = recorderRef.current;
-    recorderRef.current = null;
-    await recorder.destroy();
-  }
-
   function addLog(message: string): void {
     const stamp = new Date().toLocaleTimeString();
     setLogs((prev) => [`[${stamp}] ${message}`, ...prev].slice(0, 200));
   }
 
-  function getRecorder(): VadRecorder {
-    if (!recorderRef.current) {
-      throw new Error("Recorder not initialized yet. Submit options first.");
-    }
-    return recorderRef.current;
-  }
-
   const onApplyOptions = handleSubmit(async (values) => {
-    await createRecorder(values);
+    setCurrentOptions(values);
+    addLog("applied options (new hook recorder instance)");
   });
 
   const onInfo = async () => {
-    const info = await VadRecorder.info();
-    setModelInfo(`cached=${info.isCached} size=${info.downloadSize} bytes`);
-    addLog(`info: cached=${info.isCached} size=${info.downloadSize}`);
+    const nextInfo = await info();
+    setModelInfo(
+      `cached=${nextInfo.isCached} size=${nextInfo.downloadSize} bytes`,
+    );
+    addLog(`info: cached=${nextInfo.isCached} size=${nextInfo.downloadSize}`);
   };
 
   const onInitialize = async () => {
-    const recorder = getRecorder();
-    setStatus("initializing");
-    setProgress(0);
-
-    await recorder.initialize((event) => {
-      if (event.status === "ready") {
-        setProgress(1);
-        setStatus("initialized");
-        addLog("initialize: ready");
-        return;
-      }
-
-      setProgress(event.progress);
-      setStatus(`${event.status} ${Math.round(event.progress * 100)}%`);
-    });
+    await initialize();
+    addLog("initialize");
   };
 
   const onStart = async () => {
-    await getRecorder().start();
-    setStatus("starting");
+    await start();
     addLog("start");
   };
 
   const onPause = () => {
-    getRecorder().pause();
-    setStatus("paused");
+    pause();
     addLog("pause");
   };
 
   const onResume = () => {
-    getRecorder().resume();
-    setStatus("resumed");
+    resume();
     addLog("resume");
   };
 
   const onStop = () => {
-    getRecorder().stop();
-    setStatus("stopped");
+    stop();
     addLog("stop");
   };
 
@@ -253,8 +229,16 @@ export default function App() {
               <div className="mt-4 space-y-1 text-sm text-slate-300">
                 <p>Status: {status}</p>
                 <p>Model: {modelInfo}</p>
-                <p>Volume: {volume}</p>
-                <p>Speech probability: {probability}</p>
+                <p>
+                  Volume:{" "}
+                  {volumeDb === null ? "-" : `${volumeDb.toFixed(1)} dB`}
+                </p>
+                <p>
+                  Speech probability:{" "}
+                  {speechProbability === null
+                    ? "-"
+                    : speechProbability.toFixed(3)}
+                </p>
                 <p>Recordings: {recordingCount}</p>
               </div>
 
@@ -282,10 +266,10 @@ export default function App() {
             <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
               <h2 className="text-lg font-medium">Recordings</h2>
               <div className="mt-2 space-y-3">
-                {recordings.length === 0 ? (
+                {recordingItems.length === 0 ? (
                   <p className="text-sm text-slate-400">No recordings yet.</p>
                 ) : (
-                  recordings.map((recording) => (
+                  recordingItems.map((recording) => (
                     <div
                       key={recording.id}
                       className="rounded-md border border-slate-800 bg-slate-950 p-2"

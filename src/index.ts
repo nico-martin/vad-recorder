@@ -32,11 +32,16 @@ const DEFAULT_OPTIONS: Required<VadRecorderOptions> = {
   threshold: 0.5,
   minSpeechDuration: 250,
   minSilenceDuration: 1000,
-  channelCount: 1,
   prependSilence: 200,
   appendSilence: 300,
 };
 
+/**
+ * Voice Activity Detection (VAD) recorder for browser microphone input.
+ *
+ * Captures live audio, detects speech with Silero VAD, and emits speech
+ * segments as WAV blobs through `onRecord`.
+ */
 export class VadRecorder {
   private readonly options: Required<VadRecorderOptions>;
 
@@ -78,6 +83,16 @@ export class VadRecorder {
   private onVolumeChangeListener: NumberListener = null;
   private onSpeechProbabilityListener: NumberListener = null;
 
+  /**
+   * Create a new recorder instance.
+   *
+   * Supported options:
+   * - `threshold` (`0..1`): speech probability cutoff.
+   * - `minSpeechDuration` (ms): minimum continuous speech needed to start a segment.
+   * - `minSilenceDuration` (ms): silence needed before ending a segment.
+   * - `prependSilence` (ms): buffered lead-in audio prepended to a segment.
+   * - `appendSilence` (ms): trailing audio kept after speech end.
+   */
   constructor(options: VadRecorderOptions = {}) {
     this.options = {
       ...DEFAULT_OPTIONS,
@@ -91,10 +106,6 @@ export class VadRecorder {
         0,
         options.minSilenceDuration ?? DEFAULT_OPTIONS.minSilenceDuration,
       ),
-      channelCount: Math.max(
-        1,
-        options.channelCount ?? DEFAULT_OPTIONS.channelCount,
-      ),
       prependSilence: Math.max(
         0,
         options.prependSilence ?? DEFAULT_OPTIONS.prependSilence,
@@ -106,6 +117,12 @@ export class VadRecorder {
     };
   }
 
+  /**
+   * Get model metadata used by this recorder.
+   *
+   * - `isCached`: whether the ONNX model is present in the browser cache.
+   * - `downloadSize`: remote size in bytes for `onnx/model.onnx`.
+   */
   static async info(): Promise<VadRecorderInfo> {
     const file = "onnx/model.onnx";
     const [isCached, meta] = await Promise.all([
@@ -117,6 +134,12 @@ export class VadRecorder {
     return { isCached, downloadSize };
   }
 
+  /**
+   * Load and initialize the VAD model.
+   *
+   * Safe to call multiple times; repeated calls reuse the same loaded model.
+   * The optional callback receives download progress and a final `ready` event.
+   */
   async initialize(
     onProgress?: (progress: ProgressEvent) => void,
   ): Promise<void> {
@@ -137,6 +160,11 @@ export class VadRecorder {
     onProgress?.({ status: "ready" });
   }
 
+  /**
+   * Start microphone capture and VAD processing.
+   *
+   * Requires `initialize()` to be called first.
+   */
   async start(): Promise<void> {
     this.assertNotDestroyed();
 
@@ -157,7 +185,7 @@ export class VadRecorder {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          channelCount: this.options.channelCount,
+          channelCount: 1,
           sampleRate: SAMPLE_RATE,
           echoCancellation: true,
           noiseSuppression: true,
@@ -204,6 +232,10 @@ export class VadRecorder {
     }
   }
 
+  /**
+   * Stop microphone capture and processing.
+   * Keeps the model loaded so recording can be started again quickly.
+   */
   stop(): void {
     if (!this.started) {
       return;
@@ -215,6 +247,7 @@ export class VadRecorder {
     this.paused = false;
   }
 
+  /** Pause VAD processing while keeping the stream active. */
   pause(): void {
     this.assertNotDestroyed();
     if (!this.started) {
@@ -223,6 +256,7 @@ export class VadRecorder {
     this.paused = true;
   }
 
+  /** Resume processing after `pause()`. */
   resume(): void {
     this.assertNotDestroyed();
     if (!this.started) {
@@ -231,6 +265,12 @@ export class VadRecorder {
     this.paused = false;
   }
 
+  /**
+   * Fully dispose this instance.
+   *
+   * Stops capture, disposes model resources, and removes listeners.
+   * After calling this method, the instance cannot be reused.
+   */
   async destroy(): Promise<void> {
     if (this.destroyed) {
       return;
@@ -249,30 +289,37 @@ export class VadRecorder {
     this.clearListeners();
   }
 
+  /** Register callback fired when a speech segment blob is ready. */
   onRecord(listener: (blob: Blob) => void): void {
     this.onRecordListener = listener;
   }
 
+  /** Register callback fired when speech is detected. */
   onSpeechStart(listener: () => void): void {
     this.onSpeechStartListener = listener;
   }
 
+  /** Register callback fired when speech end is detected. */
   onSpeechEnd(listener: () => void): void {
     this.onSpeechEndListener = listener;
   }
 
+  /** Register callback fired when recorder is actively listening. */
   onReady(listener: () => void): void {
     this.onReadyListener = listener;
   }
 
+  /** Register callback fired on runtime errors. */
   onError(listener: (error: Error) => void): void {
     this.onErrorListener = listener;
   }
 
+  /** Register callback fired with current input volume in dB. */
   onVolumeChange(listener: (db: number) => void): void {
     this.onVolumeChangeListener = listener;
   }
 
+  /** Register callback fired with current VAD speech probability (`0..1`). */
   onSpeechProbability(listener: (probability: number) => void): void {
     this.onSpeechProbabilityListener = listener;
   }

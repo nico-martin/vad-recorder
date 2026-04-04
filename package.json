@@ -12,6 +12,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
     }
   },
   "files": [
@@ -22,11 +27,17 @@
     "dev": "esbuild src/index.ts --bundle --platform=neutral --format=esm --external:@huggingface/transformers --outfile=dist/index.js --sourcemap --watch",
     "build:esm": "esbuild src/index.ts --bundle --platform=neutral --format=esm --external:@huggingface/transformers --outfile=dist/index.js --minify",
     "build:cjs": "esbuild src/index.ts --bundle --platform=neutral --format=cjs --external:@huggingface/transformers --outfile=dist/index.cjs --minify",
+    "build:react:esm": "esbuild src/react.ts --bundle --platform=neutral --format=esm --external:react --external:@huggingface/transformers --outfile=dist/react.js --minify",
+    "build:react:cjs": "esbuild src/react.ts --bundle --platform=neutral --format=cjs --external:react --external:@huggingface/transformers --outfile=dist/react.cjs --minify",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
-    "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run build:types",
+    "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run build:react:esm && npm run build:react:cjs && npm run build:types",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
+  "peerDependencies": {
+    "react": ">=18"
+  },
   "devDependencies": {
+    "@types/react": "^18.3.11",
     "esbuild": "^0.25.3",
     "typescript": "^5.8.3"
   },

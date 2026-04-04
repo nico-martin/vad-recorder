@@ -14,7 +14,6 @@ export type VadRecorderOptions = {
   threshold?: number;
   minSpeechDuration?: number;
   minSilenceDuration?: number;
-  channelCount?: number;
   prependSilence?: number;
   appendSilence?: number;
 };
@@ -25,7 +24,11 @@ export type VadModelOutput = {
 };
 
 export type VadModel = {
-  (inputs: { input: Tensor; sr: Tensor; state: Tensor }): Promise<VadModelOutput>;
+  (inputs: {
+    input: Tensor;
+    sr: Tensor;
+    state: Tensor;
+  }): Promise<VadModelOutput>;
   dispose?: () => Promise<unknown>;
 };
 

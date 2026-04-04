@@ -64,9 +64,6 @@ All options are optional:
 - `minSilenceDuration` ms (default `1000`)
   - Required silence before a segment is considered finished.
   - Increase to avoid splitting natural pauses mid-sentence.
-- `channelCount` (default `1`)
-  - Number of input channels requested from the microphone.
-  - `1` (mono) is recommended.
 - `prependSilence` ms (default `100`)
   - Audio prepended before detected speech to avoid clipping first phonemes.
   - Internally combined with `minSpeechDuration` in the rolling pre-buffer.
@@ -133,4 +130,5 @@ npm run dev
 
 - Designed for browser environments.
 - Sample rate is fixed at `16000` (Silero VAD requirement).
+- Channel count is fixed at mono (`1`).
 - Current recording output is WAV blobs (`audio/wav`) for deterministic PCM assembly.
