@@ -94,7 +94,7 @@ All options are optional:
 
 `initialize(onProgress)` currently emits download progress from `progress_total` events only.
 
-- Rounded to 2 decimals (`0.00` to `1.00`)
+- Rounded to 2 decimals (`0.00` to `100.00`)
 - Emitted only when the rounded value changes
 
 ## Development
