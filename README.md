@@ -2,7 +2,7 @@
 
 `vad-recorder` is a browser-focused TypeScript library that combines voice activity detection (VAD) with automatic audio segment recording.
 
-It uses Silero VAD via `@huggingface/transformers` under the hood.
+It uses [Silero VAD](https://github.com/snakers4/silero-vad) via [`@huggingface/transformers` (Transformers.js)](https://huggingface.co/docs/transformers.js/en/index) and the [onnx-community/silero-vad model on Hugging Face](https://huggingface.co/onnx-community/silero-vad) under the hood.
 
 ## Install
 
@@ -116,12 +116,20 @@ Type-check:
 npm run typecheck
 ```
 
-## Example app
+## Example apps
 
-A minimal Vite demo is included at `examples/simple`.
+A minimal vanilla demo is included at `examples/simple`.
 
 ```bash
 cd examples/simple
+npm install
+npm run dev
+```
+
+A React demo is included at `examples/react`.
+
+```bash
+cd examples/react
 npm install
 npm run dev
 ```
