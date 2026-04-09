@@ -39,10 +39,14 @@
   "devDependencies": {
     "@types/react": "^18.3.11",
     "esbuild": "^0.25.3",
+    "prettier": "^3.8.1",
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.0.1",
-    "prettier": "^3.8.1"
+    "@huggingface/transformers": "^4.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nico-martin/vad-recorder.git"
   }
 }
