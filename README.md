@@ -41,6 +41,56 @@ await recorder.initialize((event) => {
 await recorder.start();
 ```
 
+## React hook
+
+For React projects, use the hook export:
+
+```tsx
+import { useVadRecorder } from "vad-recorder/react";
+
+function App() {
+  const {
+    status,
+    progress,
+    recordings,
+    error,
+    initialize,
+    start,
+    stop,
+    pause,
+    resume,
+    clearRecordings,
+  } = useVadRecorder({
+    threshold: 0.55,
+    minSpeechDuration: 250,
+    minSilenceDuration: 900,
+    prependSilence: 120,
+    appendSilence: 300,
+  });
+
+  return (
+    <div>
+      <p>Status: {status}</p>
+      <p>Download: {Math.round(progress * 100)}%</p>
+      <button onClick={() => void initialize()}>Initialize</button>
+      <button onClick={() => void start()}>Start</button>
+      <button onClick={pause}>Pause</button>
+      <button onClick={resume}>Resume</button>
+      <button onClick={stop}>Stop</button>
+      <button onClick={clearRecordings}>Clear</button>
+      <p>Recordings: {recordings.length}</p>
+      {error ? <pre>{error.message}</pre> : null}
+    </div>
+  );
+}
+```
+
+`useVadRecorder(options?)` returns:
+
+- `status`, `progress`, `volumeDb`, `speechProbability`
+- `recordings`, `error`, `recorder`
+- `initialize`, `start`, `stop`, `pause`, `resume`, `destroy`, `clearRecordings`, `info`
+
 ## API
 
 ### `VadRecorder.info(): Promise<{ isCached: boolean; downloadSize: number }>`
